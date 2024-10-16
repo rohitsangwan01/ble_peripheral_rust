@@ -1,0 +1,67 @@
+[package]
+name = "ble-peripheral-rust"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A Rust crate for implementing BLE (Bluetooth Low Energy) peripherals"
+homepage = "https://github.com/rohitsangwan01/ble_peripheral_rust"
+repository = "https://github.com/rohitsangwan01/ble_peripheral_rust"
+keywords = ["BLE", "Bluetooth", "Bluez", "CoreBluetooth", "USB"]
+categories = ["os", "api-bindings", "hardware-support"]
+
+[dependencies]
+futures = "0.3.31"
+tokio = { version = "1.40.0", features = [
+    "sync",
+    "net",
+    "rt",
+    "io-util",
+    "rt-multi-thread",
+    "macros",
+    "time",
+] }
+uuid = "1.10.0"
+log = "0.4"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "^0.9.0"
+dbus-tokio = "^0.7.0"
+dbus-tree = "^0.9.1"
+dbus-crossroads = "^0.5.2"
+
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+objc = "0.2.7"
+objc-foundation = "0.1.1"
+objc_id = "0.1.1"
+objc2 = "0.5.2"
+objc2-foundation = { version = "0.2.2", features = [
+    "block2",
+    "NSArray",
+    "NSData",
+    "NSDictionary",
+    "NSEnumerator",
+    "NSError",
+    "NSObject",
+    "NSString",
+    "NSUUID",
+    "NSValue",
+] }
+objc2-core-bluetooth = { version = "0.2.2", features = [
+    "CBAdvertisementData",
+    "CBAttribute",
+    "CBCentralManager",
+    "CBPeripheralManager",
+    "CBCentralManagerConstants",
+    "CBCharacteristic",
+    "CBDescriptor",
+    "CBManager",
+    "CBPeer",
+    "CBPeripheral",
+    "CBService",
+    "CBUUID",
+] }
+
+
+[dev-dependencies]
+pretty_env_logger = "0.5.0"
