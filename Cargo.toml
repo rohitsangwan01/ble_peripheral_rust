@@ -31,9 +31,22 @@ dbus-crossroads = "^0.5.2"
 
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
-objc = "0.2.7"
-objc-foundation = "0.1.1"
-objc_id = "0.1.1"
+objc2-core-bluetooth = { version = "0.2.2", features = [
+    "CBAdvertisementData",
+    "CBAttribute",
+    "CBATTRequest",
+    "CBCentral",
+    "CBCentralManager",
+    "CBPeripheralManager",
+    "CBCentralManagerConstants",
+    "CBCharacteristic",
+    "CBDescriptor",
+    "CBManager",
+    "CBPeer",
+    "CBPeripheral",
+    "CBService",
+    "CBUUID",
+] }
 objc2 = "0.5.2"
 objc2-foundation = { version = "0.2.2", features = [
     "block2",
@@ -46,20 +59,6 @@ objc2-foundation = { version = "0.2.2", features = [
     "NSString",
     "NSUUID",
     "NSValue",
-] }
-objc2-core-bluetooth = { version = "0.2.2", features = [
-    "CBAdvertisementData",
-    "CBAttribute",
-    "CBCentralManager",
-    "CBPeripheralManager",
-    "CBCentralManagerConstants",
-    "CBCharacteristic",
-    "CBDescriptor",
-    "CBManager",
-    "CBPeer",
-    "CBPeripheral",
-    "CBService",
-    "CBUUID",
 ] }
 
 

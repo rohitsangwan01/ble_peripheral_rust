@@ -159,37 +159,23 @@ async fn main() {
 
     let peripheral = Peripheral::new().await.unwrap();
 
-    let mut powered = peripheral.is_powered().await;
-    println!("Peripheral powered: {:?}", powered);
-
-    powered = peripheral.is_powered().await;
-    println!("Peripheral powered: {:?}", powered);
+    while !peripheral.is_powered().await.unwrap() {}
+    println!("Peripheral powered on");
 
     let service_uuid = Uuid::from_sdp_short_uuid(0x1234_u16);
     peripheral
         .add_service(&Service::new(service_uuid, true, characteristics.clone()))
         .await
         .unwrap();
+
+    peripheral.register_gatt().await.unwrap();
+
     peripheral
-        .add_service(&Service::new(
-            Uuid::from_sdp_short_uuid(0x2345_u16),
-            true,
-            characteristics.clone(),
-        ))
+        .start_advertising(ADVERTISING_NAME, &[service_uuid])
         .await
         .unwrap();
 
     let main_fut = async move {
-        while !peripheral.is_powered().await.unwrap() {}
-
-        println!("Peripheral powered on");
-        peripheral.register_gatt().await.unwrap();
-
-        peripheral
-            .start_advertising(ADVERTISING_NAME, &[service_uuid])
-            .await
-            .unwrap();
-
         println!("Peripheral started advertising");
         let ad_check = async { while !peripheral.is_advertising().await.unwrap() {} };
 

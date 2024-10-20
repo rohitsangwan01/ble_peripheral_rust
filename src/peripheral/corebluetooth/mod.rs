@@ -1,48 +1,29 @@
-mod characteristic_flags;
-mod core_bluetooth_event;
-mod error;
-mod ffi;
-mod into_cbuuid;
+mod characteristic_utils;
+mod mac_extensions;
+mod mac_utils;
 pub mod peripheral_delegate;
 mod peripheral_manager;
 
-use crate::{
-    gatt::service::Service,
-    response_channel::{self, response_error::TokenKind},
-    Error,
-};
-use core_bluetooth_event::CoreBluetoothMessage;
+use crate::{gatt::service::Service, Error};
 use peripheral_delegate::PeripheralDelegateEvent;
-use peripheral_manager::run_corebluetooth_thread;
-use tokio::sync::mpsc::channel;
+use peripheral_manager::PeripheralManager;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub struct Peripheral {
-    sender_result: response_channel::Sender<CoreBluetoothMessage, TokenKind>,
+    peripheral_manager: PeripheralManager,
 }
 
 impl Peripheral {
     pub async fn new() -> Result<Self, Error> {
-        let (sender, mut receiver) = channel::<PeripheralDelegateEvent>(256);
-        let sender_result = run_corebluetooth_thread(sender);
-        if sender_result.is_err() {
-            return Err(sender_result.err().unwrap());
-        }
-
+        let (sender_tx, mut sender_rx) = mpsc::channel::<PeripheralDelegateEvent>(256);
+        let peripheral_manager = PeripheralManager::new(sender_tx).unwrap();
         tokio::spawn(async move {
-            while let Some(update) = receiver.recv().await {
-                match update {
-                    PeripheralDelegateEvent::DidUpdateState { state } => {
-                        println!("BleOn: {:?}", state)
-                    }
-                }
+            while let Some(update) = sender_rx.recv().await {
+                handle_updates(update);
             }
         });
-
-        // Store the sender in the Peripheral struct
-        Ok(Peripheral {
-            sender_result: sender_result.unwrap(),
-        })
+        Ok(Peripheral { peripheral_manager })
     }
 
     pub async fn register_gatt(&self) -> Result<(), Error> {
@@ -54,68 +35,76 @@ impl Peripheral {
     }
 
     pub async fn is_powered(&self) -> Result<bool, Error> {
-        let result: Option<TokenKind> = self.send_event(CoreBluetoothMessage::IsPowered).await;
-        let result = result.unwrap();
-        if let TokenKind::Boolean(value) = result {
-            return Ok(value);
-        }
-        return Ok(true);
+        return Ok(self.peripheral_manager.is_powered());
     }
 
     pub async fn is_advertising(&self) -> Result<bool, Error> {
-        let result = self.send_event(CoreBluetoothMessage::IsAdvertising).await;
-        if result.is_none() {
-            return Err(Error::from_type(crate::ErrorType::Unknown));
-        }
-        let result = result.unwrap();
-        if let TokenKind::Boolean(value) = result {
-            return Ok(value);
-        }
-        return Ok(true);
+        return Ok(self.peripheral_manager.is_advertising());
     }
 
     pub async fn start_advertising(self: &Self, name: &str, uuids: &[Uuid]) -> Result<(), Error> {
-        let result = self
-            .send_event(CoreBluetoothMessage::StartAdvertising {
-                name: name.to_string(),
-                uuids: uuids.to_vec(),
-            })
-            .await;
-        if result.is_none() {
-            return Err(Error::from_type(crate::ErrorType::Unknown));
-        }
-        return Ok(());
+        return Ok(self.peripheral_manager.start_advertising(name, uuids));
     }
 
     pub async fn stop_advertising(&self) -> Result<(), Error> {
-        let result = self.send_event(CoreBluetoothMessage::StopAdvertising).await;
-        if result.is_none() {
-            return Err(Error::from_type(crate::ErrorType::Unknown));
-        }
-        return Ok(());
+        return Ok(self.peripheral_manager.stop_advertising());
     }
 
     pub async fn add_service(&self, service: &Service) -> Result<(), Error> {
-        let result = self
-            .send_event(CoreBluetoothMessage::AddService(service.clone()))
-            .await;
-        if result.is_none() {
-            return Err(Error::from_type(crate::ErrorType::Unknown));
-        }
-        return Ok(());
+        return Ok(self.peripheral_manager.add_service(service));
     }
+}
 
-    pub async fn send_event(&self, message: CoreBluetoothMessage) -> Option<TokenKind> {
-        let result = self
-            .sender_result
-            .clone()
-            .send_await_automatic(message)
-            .await;
-        if result.is_err() {
-            let err = result.err().unwrap();
-            println!("Error sending event: {:?}", err);
-            return None;
+pub fn handle_updates(update: PeripheralDelegateEvent) {
+    match update {
+        PeripheralDelegateEvent::DidUpdateState { state } => {
+            println!("BleOn: {:?}", state)
         }
-        return result.unwrap();
+        PeripheralDelegateEvent::DidStartAdverising { error } => {
+            println!("DidStartAdvertising: {:?}", error)
+        }
+        PeripheralDelegateEvent::DidAddService { service, error } => {
+            println!("DidAddService: {:?} {:?}", service, error)
+        }
+        PeripheralDelegateEvent::DidSubscribeToCharacteristic {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidSubscribeToCharacteristic: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralDelegateEvent::DidUnsubscribeFromCharacteristic {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidUnsubscribeFromCharacteristic: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralDelegateEvent::DidReceiveReadRequest {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidReceiveReadRequest: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralDelegateEvent::DidReceiveWriteRequest {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidReceiveWriteRequest: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
     }
 }
