@@ -36,9 +36,10 @@ async fn main() {
                 properties::AttributePermission::Readable,
                 properties::AttributePermission::Writeable,
             ],
-            Some(String::from("hi").into()),
+            // Some(String::from("hi").into()),
+            None,
             vec![
-                // Desc
+                // Descriptor
                 Descriptor::new(
                     Uuid::from_sdp_short_uuid(0x2A3D as u16),
                     vec![CharacteristicProperty::Read, CharacteristicProperty::Write],

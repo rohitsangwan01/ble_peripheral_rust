@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CharacteristicProperty {
     Broadcast,
     Read,
@@ -12,7 +12,7 @@ pub enum CharacteristicProperty {
     IndicateEncryptionRequired,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AttributePermission {
     Readable,
     Writeable,

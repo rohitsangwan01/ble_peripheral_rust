@@ -83,6 +83,8 @@ impl PeripheralManager {
         unsafe { self.peripheral_manager_delegate.isAdvertising() }
     }
 
+    // Peripheral with cache value must only have Read permission, else it will crash
+    // TODO: throw proper error
     pub fn add_service(self: &Self, service: &Service) {
         unsafe {
             let characteristics: Vec<Retained<CBCharacteristic>> = service
@@ -91,11 +93,12 @@ impl PeripheralManager {
                 .map(|characteristic| parse_characteristic(characteristic))
                 .collect();
 
-            let mutable_service: Retained<CBMutableService> = CBMutableService::initWithType_primary(
-                CBMutableService::alloc(),
-                &service.uuid.to_cbuuid(),
-                service.primary,
-            );
+            let mutable_service: Retained<CBMutableService> =
+                CBMutableService::initWithType_primary(
+                    CBMutableService::alloc(),
+                    &service.uuid.to_cbuuid(),
+                    service.primary,
+                );
 
             if !characteristics.is_empty() {
                 let chars = NSArray::from_vec(characteristics);
