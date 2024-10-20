@@ -40,14 +40,6 @@ impl Peripheral {
         })
     }
 
-    pub async fn register_gatt(&self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    pub async fn unregister_gatt(&self) -> Result<(), Error> {
-        Ok(())
-    }
-
     pub async fn is_powered(&self) -> Result<bool, Error> {
         let result = self.adapter.is_powered().await?;
         return Ok(result);

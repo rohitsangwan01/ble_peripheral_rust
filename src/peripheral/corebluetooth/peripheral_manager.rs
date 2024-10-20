@@ -91,7 +91,7 @@ impl PeripheralManager {
                 .map(|characteristic| parse_characteristic(characteristic))
                 .collect();
 
-            let mutable_service = CBMutableService::initWithType_primary(
+            let mutable_service: Retained<CBMutableService> = CBMutableService::initWithType_primary(
                 CBMutableService::alloc(),
                 &service.uuid.to_cbuuid(),
                 service.primary,
@@ -102,8 +102,10 @@ impl PeripheralManager {
                 mutable_service.setCharacteristics(Some(&chars));
             }
 
+            println!("Adding service");
             self.peripheral_manager_delegate
                 .addService(&mutable_service);
+            println!("Added service");
         }
     }
 }
