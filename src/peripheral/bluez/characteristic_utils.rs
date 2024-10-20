@@ -28,7 +28,7 @@ pub fn parse_services(
 
         let service = Service {
             uuid: service.uuid,
-            primary: true,
+            primary: service.primary,
             characteristics: chars,
             control_handle: service_handle,
             ..Default::default()
