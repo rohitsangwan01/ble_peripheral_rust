@@ -1,3 +1,5 @@
+use crate::gatt::peripheral_event::PeripheralEvent;
+
 use super::mac_extensions::UuidHelper;
 use objc2::{declare_class, msg_send_id, mutability, rc::Retained, ClassType, DeclaredClass};
 use objc2_core_bluetooth::{
@@ -7,40 +9,6 @@ use objc2_core_bluetooth::{
 use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use std::fmt::Debug;
 use tokio::sync::mpsc::{self, Sender};
-use uuid::Uuid;
-
-pub enum PeripheralDelegateEvent {
-    DidUpdateState {
-        state: CBManagerState,
-    },
-    DidStartAdverising {
-        error: Option<String>,
-    },
-    DidAddService {
-        service: Uuid,
-        error: Option<String>,
-    },
-    DidSubscribeToCharacteristic {
-        client: String,
-        service: Uuid,
-        characteristic: Uuid,
-    },
-    DidUnsubscribeFromCharacteristic {
-        client: String,
-        service: Uuid,
-        characteristic: Uuid,
-    },
-    DidReceiveReadRequest {
-        client: String,
-        service: Uuid,
-        characteristic: Uuid,
-    },
-    DidReceiveWriteRequest {
-        client: String,
-        service: Uuid,
-        characteristic: Uuid,
-    },
-}
 
 declare_class!(
     #[derive(Debug)]
@@ -53,7 +21,7 @@ declare_class!(
     }
 
     impl DeclaredClass for PeripheralDelegate {
-        type Ivars = Sender<PeripheralDelegateEvent>;
+        type Ivars = Sender<PeripheralEvent>;
     }
 
     unsafe impl NSObjectProtocol for PeripheralDelegate {}
@@ -62,7 +30,7 @@ declare_class!(
         #[method(peripheralManagerDidUpdateState:)]
          fn delegate_peripheralmanagerdidupdatestate(&self, peripheral: &CBPeripheralManager){
                 let state = unsafe { peripheral.state() };
-                self.send_event(PeripheralDelegateEvent::DidUpdateState { state });
+                self.send_event(PeripheralEvent::DidUpdateState { is_powered : state == CBManagerState::PoweredOn });
          }
 
         #[method(peripheralManagerDidStartAdvertising:error:)]
@@ -71,7 +39,7 @@ declare_class!(
             if let Some(error) = error {
                 error_desc = Some(error.localizedDescription().to_string());
             }
-            self.send_event(PeripheralDelegateEvent::DidStartAdverising { error: error_desc });
+            self.send_event(PeripheralEvent::DidStartAdverising { error: error_desc });
         }
 
         #[method(peripheralManager:didAddService:error:)]
@@ -80,7 +48,7 @@ declare_class!(
             if let Some(error) = error {
                 error_desc = Some(error.localizedDescription().to_string());
             }
-            self.send_event(PeripheralDelegateEvent::DidAddService {
+            self.send_event(PeripheralEvent::DidAddService {
                 service: service.get_uuid(),
                 error: error_desc
             });
@@ -98,7 +66,7 @@ declare_class!(
                 if service.is_none() {
                     return;
                 }
-                self.send_event(PeripheralDelegateEvent::DidSubscribeToCharacteristic {
+                self.send_event(PeripheralEvent::DidSubscribeToCharacteristic {
                     client: central.identifier().to_string(),
                     service: characteristic.service().unwrap().get_uuid(),
                     characteristic: characteristic.get_uuid(),
@@ -117,7 +85,7 @@ declare_class!(
             if service.is_none() {
                 return;
             }
-            self.send_event(PeripheralDelegateEvent::DidUnsubscribeFromCharacteristic {
+            self.send_event(PeripheralEvent::DidUnsubscribeFromCharacteristic {
                 client: central.identifier().to_string(),
                 service: characteristic.service().unwrap().get_uuid(),
                 characteristic: characteristic.get_uuid(),
@@ -137,7 +105,7 @@ declare_class!(
                 }
                 let central = request.central();
                 let characteristic = request.characteristic();
-                self.send_event(PeripheralDelegateEvent::DidReceiveReadRequest{
+                self.send_event(PeripheralEvent::DidReceiveReadRequest{
                     client: central.identifier().to_string(),
                     service: characteristic.service().unwrap().get_uuid(),
                     characteristic: characteristic.get_uuid(),
@@ -157,12 +125,19 @@ declare_class!(
                     if service.is_none() {
                         return;
                     }
+                    let mut value: Vec<u8> = Vec::new();
+
+                    if let Some(ns_data) = request.value() {
+                       value = ns_data.bytes().to_vec();
+                    }
+
                     let central = request.central();
                     let characteristic = request.characteristic();
-                    self.send_event(PeripheralDelegateEvent::DidReceiveWriteRequest{
+                    self.send_event(PeripheralEvent::DidReceiveWriteRequest{
                         client: central.identifier().to_string(),
                         service: characteristic.service().unwrap().get_uuid(),
                         characteristic: characteristic.get_uuid(),
+                        value: value,
                     });
                 }
             }
@@ -171,12 +146,12 @@ declare_class!(
 );
 
 impl PeripheralDelegate {
-    pub fn new(sender: mpsc::Sender<PeripheralDelegateEvent>) -> Retained<Self> {
+    pub fn new(sender: mpsc::Sender<PeripheralEvent>) -> Retained<Self> {
         let this = PeripheralDelegate::alloc().set_ivars(sender);
         unsafe { msg_send_id![super(this), init] }
     }
 
-    fn send_event(&self, event: PeripheralDelegateEvent) {
+    fn send_event(&self, event: PeripheralEvent) {
         let sender = self.ivars().clone();
         futures::executor::block_on(async {
             if let Err(e) = sender.send(event).await {

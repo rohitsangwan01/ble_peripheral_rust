@@ -163,6 +163,7 @@ async fn main() {
     tokio::spawn(async move {
         while let Some(event) = receiver_rx.recv().await {
             println!("Peripheral event: {:?}", event);
+            handle_updates(event);
         }
     });
 
@@ -194,4 +195,59 @@ async fn main() {
     };
 
     futures::join!(characteristic_handler, descriptor_handler, main_fut);
+}
+
+pub fn handle_updates(update: PeripheralEvent) {
+    match update {
+        PeripheralEvent::DidUpdateState { is_powered } => {
+            println!("PowerOn: {:?}", is_powered)
+        }
+        PeripheralEvent::DidStartAdverising { error } => {
+            println!("DidStartAdvertising: {:?}", error)
+        }
+        PeripheralEvent::DidAddService { service, error } => {
+            println!("DidAddService: {:?} {:?}", service, error)
+        }
+        PeripheralEvent::DidSubscribeToCharacteristic {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidSubscribeToCharacteristic: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralEvent::DidUnsubscribeFromCharacteristic {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidUnsubscribeFromCharacteristic: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralEvent::DidReceiveReadRequest {
+            client,
+            service,
+            characteristic,
+        } => {
+            println!(
+                "DidReceiveReadRequest: {:?} {:?} {:?}",
+                client, service, characteristic
+            )
+        }
+        PeripheralEvent::DidReceiveWriteRequest {
+            client,
+            service,
+            characteristic,
+            value,
+        } => {
+            println!(
+                "DidReceiveWriteRequest: {:?} {:?} {:?} {:?}",
+                client, service, characteristic, value
+            )
+        }
+    }
 }

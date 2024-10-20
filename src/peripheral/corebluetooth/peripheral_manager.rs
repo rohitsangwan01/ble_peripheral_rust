@@ -1,7 +1,7 @@
 use super::characteristic_utils::parse_characteristic;
 use super::mac_extensions::UuidExtension as _;
-use super::peripheral_delegate::PeripheralDelegateEvent;
 use super::{mac_utils, peripheral_delegate::PeripheralDelegate};
+use crate::gatt::peripheral_event::PeripheralEvent;
 use crate::gatt::service::Service;
 use crate::Error;
 use objc2::{msg_send_id, rc::Retained, runtime::AnyObject, ClassType};
@@ -23,7 +23,7 @@ pub struct PeripheralManager {
 }
 
 impl PeripheralManager {
-    pub fn new(sender_tx: mpsc::Sender<PeripheralDelegateEvent>) -> Result<Self, Error> {
+    pub fn new(sender_tx: mpsc::Sender<PeripheralEvent>) -> Result<Self, Error> {
         if !is_authorized() {
             return Err(Error::from_type(crate::ErrorType::PermissionDenied));
         }
