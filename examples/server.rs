@@ -159,9 +159,24 @@ async fn main() {
 
     let peripheral = Peripheral::new().await.unwrap();
 
+    let mut powered = peripheral.is_powered().await;
+    println!("Peripheral powered: {:?}", powered);
+
+    powered = peripheral.is_powered().await;
+    println!("Peripheral powered: {:?}", powered);
+
     let service_uuid = Uuid::from_sdp_short_uuid(0x1234_u16);
     peripheral
-        .add_service(&Service::new(service_uuid, true, characteristics))
+        .add_service(&Service::new(service_uuid, true, characteristics.clone()))
+        .await
+        .unwrap();
+    peripheral
+        .add_service(&Service::new(
+            Uuid::from_sdp_short_uuid(0x2345_u16),
+            true,
+            characteristics.clone(),
+        ))
+        .await
         .unwrap();
 
     let main_fut = async move {
@@ -177,7 +192,7 @@ async fn main() {
 
         println!("Peripheral started advertising");
         let ad_check = async { while !peripheral.is_advertising().await.unwrap() {} };
-        
+
         let timeout = tokio::time::sleep(ADVERTISING_TIMEOUT);
         futures::join!(ad_check, timeout);
         peripheral.stop_advertising().await.unwrap();

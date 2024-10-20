@@ -5,8 +5,7 @@
 mod error;
 pub mod gatt;
 mod peripheral;
+mod response_channel;
 mod uuid;
 
 pub use self::{error::*, peripheral::Peripheral, uuid::*};
-
-pub mod macos_old;

@@ -1,228 +1,188 @@
-use std::{
-    ffi::CString,
-    sync::{Once, ONCE_INIT},
-};
-
-use objc::{class, declare::ClassDecl, msg_send, runtime::{BOOL, Class, NO, Object, Protocol, Sel, YES}, sel, sel_impl};
-use objc_foundation::{
-    INSArray, INSData, INSDictionary, INSString, NSArray, NSData, NSDictionary, NSObject, NSString,
-};
-use objc_id::{Id, Shared};
-
-use uuid::Uuid;
-
+use super::core_bluetooth_event::CoreBluetoothMessage;
+use super::peripheral_delegate::PeripheralDelegateEvent;
+use super::{characteristic_flags::get_properties_and_permissions, into_cbuuid::IntoCBUUID};
+use super::{ffi, peripheral_delegate::PeripheralDelegate};
 use crate::gatt::service::Service;
-
-use super::{
-    characteristic_flags::get_properties_and_permissions,
-    constants::{PERIPHERAL_MANAGER_DELEGATE_CLASS_NAME, PERIPHERAL_MANAGER_IVAR, POWERED_ON_IVAR},
-    events::{
-        peripheral_manager_did_add_service_error, peripheral_manager_did_receive_read_request,
-        peripheral_manager_did_receive_write_requests,
-        peripheral_manager_did_start_advertising_error, peripheral_manager_did_update_state,
-    },
-    ffi::{
-        dispatch_queue_create, nil, CBAdvertisementDataLocalNameKey,
-        CBAdvertisementDataServiceUUIDsKey, DISPATCH_QUEUE_SERIAL,
-    },
-    into_bool::IntoBool,
-    into_cbuuid::IntoCBUUID,
+use crate::response_channel::response_error::TokenKind;
+use crate::{response_channel, Error};
+use log::{trace, warn};
+use objc2::{msg_send_id, rc::Retained, runtime::AnyObject, ClassType};
+use objc2_core_bluetooth::{
+    CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey, CBAttributePermissions,
+    CBCharacteristic, CBCharacteristicProperties, CBManager, CBManagerAuthorization,
+    CBManagerState, CBMutableCharacteristic, CBMutableService, CBPeripheralManager,
 };
-
-static REGISTER_DELEGATE_CLASS: Once = ONCE_INIT;
+use objc2_foundation::{NSArray, NSData, NSDictionary, NSString};
+use std::ffi::CString;
+use std::sync::Arc;
+use std::thread;
+use tokio::runtime;
+use tokio::sync::mpsc::{Receiver, Sender};
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct PeripheralManager {
-    peripheral_manager_delegate: Id<Object, Shared>,
+    peripheral_manager_delegate: Retained<CBPeripheralManager>,
+    receiver: Receiver<(CoreBluetoothMessage, Sender<TokenKind>)>,
 }
 
 impl PeripheralManager {
-    pub fn new() -> Self {
-        REGISTER_DELEGATE_CLASS.call_once(|| {
-            let mut decl =
-                ClassDecl::new(PERIPHERAL_MANAGER_DELEGATE_CLASS_NAME, class!(NSObject)).unwrap();
-            decl.add_protocol(Protocol::get("CBPeripheralManagerDelegate").unwrap());
+    pub fn new(
+        peripheral_delegate: Arc<Retained<PeripheralDelegate>>,
+        receiver: Receiver<(CoreBluetoothMessage, Sender<TokenKind>)>,
+    ) -> Result<Self, Error> {
+        let authorization = unsafe { CBManager::authorization_class() };
+        if authorization != CBManagerAuthorization::AllowedAlways
+            && authorization != CBManagerAuthorization::NotDetermined
+        {
+            warn!("Authorization status {:?}", authorization);
+            return Err(Error::from_type(crate::ErrorType::PermissionDenied));
+        } else {
+            trace!("Authorization status {:?}", authorization);
+        }
 
-            decl.add_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR);
-            decl.add_ivar::<BOOL>(POWERED_ON_IVAR);
-
-            unsafe {
-                decl.add_method(
-                    sel!(init),
-                    init as extern "C" fn(&mut Object, Sel) -> *mut Object,
-                );
-                decl.add_method(
-                    sel!(peripheralManagerDidUpdateState:),
-                    peripheral_manager_did_update_state
-                        as extern "C" fn(&mut Object, Sel, *mut Object),
-                );
-                decl.add_method(
-                    sel!(peripheralManagerDidStartAdvertising:error:),
-                    peripheral_manager_did_start_advertising_error
-                        as extern "C" fn(&mut Object, Sel, *mut Object, *mut Object),
-                );
-                decl.add_method(
-                    sel!(peripheralManager:didAddService:error:),
-                    peripheral_manager_did_add_service_error
-                        as extern "C" fn(&mut Object, Sel, *mut Object, *mut Object, *mut Object),
-                );
-                decl.add_method(
-                    sel!(peripheralManager:didReceiveReadRequest:),
-                    peripheral_manager_did_receive_read_request
-                        as extern "C" fn(&mut Object, Sel, *mut Object, *mut Object),
-                );
-                decl.add_method(
-                    sel!(peripheralManager:didReceiveWriteRequests:),
-                    peripheral_manager_did_receive_write_requests
-                        as extern "C" fn(&mut Object, Sel, *mut Object, *mut Object),
-                );
-            }
-
-            decl.register();
-        });
-
-        let peripheral_manager_delegate = unsafe {
-            let cls = Class::get(PERIPHERAL_MANAGER_DELEGATE_CLASS_NAME).unwrap();
-            let mut obj: *mut Object = msg_send![cls, alloc];
-            obj = msg_send![obj, init];
-            Id::from_ptr(obj).share()
+        let label: CString = CString::new("CBqueue").unwrap();
+        let queue: *mut std::ffi::c_void =
+            unsafe { ffi::dispatch_queue_create(label.as_ptr(), ffi::DISPATCH_QUEUE_SERIAL) };
+        let queue: *mut AnyObject = queue.cast();
+        let peripheral_manager_delegate: Retained<CBPeripheralManager> = unsafe {
+            msg_send_id![CBPeripheralManager::alloc(), initWithDelegate: &**peripheral_delegate, queue: queue]
         };
-
-        PeripheralManager {
+        Ok(Self {
             peripheral_manager_delegate,
+            receiver: receiver,
+        })
+    }
+
+    pub async fn wait_for_message(&mut self) {
+        if let Some((message, tx)) = self.receiver.recv().await {
+            let token_kind: TokenKind = match message {
+                CoreBluetoothMessage::StartAdvertising { name, uuids } => {
+                    TokenKind::Ok(self.start_advertising(&name, &uuids))
+                }
+                CoreBluetoothMessage::StopAdvertising => TokenKind::Ok(self.stop_advertising()),
+                CoreBluetoothMessage::AddService(service) => {
+                    TokenKind::Ok(self.add_service(&service))
+                }
+                CoreBluetoothMessage::IsPowered => TokenKind::Boolean(self.is_powered()),
+                CoreBluetoothMessage::IsAdvertising => TokenKind::Boolean(self.is_advertising()),
+            };
+            let result = tx.send(token_kind).await;
+            if let Err(result) = result {
+                println!("Error sending tokenKind: {:?}", result);
+            }
         }
     }
 
     pub fn is_powered(self: &Self) -> bool {
         unsafe {
-            let powered_on = *self
-                .peripheral_manager_delegate
-                .get_ivar::<BOOL>(POWERED_ON_IVAR);
-            powered_on.into_bool()
+            let state = self.peripheral_manager_delegate.state();
+            println!("State: {:?}", state);
+            state == CBManagerState::PoweredOn
         }
     }
 
     pub fn start_advertising(self: &Self, name: &str, uuids: &[Uuid]) {
-        let peripheral_manager = unsafe {
-            *self
-                .peripheral_manager_delegate
-                .get_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR)
-        };
-
         let mut keys: Vec<&NSString> = vec![];
-        let mut objects: Vec<Id<NSObject>> = vec![];
+        let mut objects: Vec<Retained<AnyObject>> = vec![];
 
         unsafe {
-            keys.push(&*(CBAdvertisementDataLocalNameKey as *mut NSString));
-            objects.push(Id::from_retained_ptr(msg_send![
-                NSString::from_str(name),
-                copy
-            ]));
-            keys.push(&*(CBAdvertisementDataServiceUUIDsKey as *mut NSString));
-            objects.push(Id::from_retained_ptr(msg_send![
-                NSArray::from_vec(
-                    uuids
-                        .iter()
-                        .map(|u| Id::from_ptr(u.into_cbuuid() as *mut NSObject))
-                        .collect::<Vec<Id<NSObject>>>()
-                ),
-                copy
-            ]));
+            keys.push(CBAdvertisementDataLocalNameKey);
+            objects.push(Retained::cast(NSString::from_str(name)));
+
+            keys.push(CBAdvertisementDataServiceUUIDsKey);
+            objects.push(Retained::cast(NSArray::from_vec(
+                uuids.iter().map(|u| u.to_cbuuid()).collect(),
+            )));
         }
 
-        let advertising_data = NSDictionary::from_keys_and_objects(keys.as_slice(), objects);
+        let advertising_data: Retained<NSDictionary<NSString, AnyObject>> =
+            NSDictionary::from_vec(&keys, objects);
+
         unsafe {
-            let _: Result<(), ()> =
-                msg_send![peripheral_manager, startAdvertising: advertising_data];
+            println!("Starting advetisemet");
+            self.peripheral_manager_delegate
+                .startAdvertising(Some(&advertising_data));
         }
     }
 
     pub fn stop_advertising(self: &Self) {
         unsafe {
-            let peripheral_manager = *self
-                .peripheral_manager_delegate
-                .get_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR);
-            let _: Result<(), ()> = msg_send![peripheral_manager, stopAdvertising];
+            self.peripheral_manager_delegate.stopAdvertising();
         }
     }
 
     pub fn is_advertising(self: &Self) -> bool {
-        unsafe {
-            let peripheral_manager = *self
-                .peripheral_manager_delegate
-                .get_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR);
-            let response: *mut Object = msg_send![peripheral_manager, isAdvertising];
-            response.into_bool()
-        }
+        unsafe { self.peripheral_manager_delegate.isAdvertising() }
     }
 
     pub fn add_service(self: &Self, service: &Service) {
-        let characteristics: Vec<Id<NSObject>> = service
+        let characteristics: Vec<Retained<CBCharacteristic>> = service
             .characteristics
             .iter()
             .map(|characteristic| {
                 let (properties, permissions) = get_properties_and_permissions(characteristic);
                 unsafe {
-                    let cls = class!(CBMutableCharacteristic);
-                    let obj: *mut Object = msg_send![cls, alloc];
-
-                    let init_with_type = characteristic.uuid.into_cbuuid();
-                    let mutable_characteristic: *mut Object = match characteristic.value {
-                        Some(ref value) => msg_send![obj, initWithType:init_with_type
-                                                            properties:properties
-                                                                 value:NSData::with_bytes(value)
-                                                           permissions:permissions],
-                        None => msg_send![obj, initWithType:init_with_type
-                                                 properties:properties
-                                                      value:nil
-                                                permissions:permissions],
+                    let mutable_char = match characteristic.value.clone() {
+                        Some(value) => {
+                            CBMutableCharacteristic::initWithType_properties_value_permissions(
+                                CBMutableCharacteristic::alloc(),
+                                &characteristic.uuid.to_cbuuid(),
+                                CBCharacteristicProperties::from_bits(properties as usize).unwrap(),
+                                Some(&NSData::from_vec(value.clone())),
+                                CBAttributePermissions::from_bits(permissions as usize).unwrap(),
+                            )
+                        }
+                        None => CBMutableCharacteristic::initWithType_properties_value_permissions(
+                            CBMutableCharacteristic::alloc(),
+                            &characteristic.uuid.to_cbuuid(),
+                            CBCharacteristicProperties::from_bits(properties as usize).unwrap(),
+                            None,
+                            CBAttributePermissions::from_bits(permissions as usize).unwrap(),
+                        ),
                     };
-
-                    Id::from_ptr(mutable_characteristic as *mut NSObject)
+                    return Retained::into_super(mutable_char);
                 }
             })
             .collect();
 
         unsafe {
-            let cls = class!(CBMutableService);
-            let obj: *mut Object = msg_send![cls, alloc];
-            let service: *mut Object = msg_send![obj, initWithType:service.uuid.into_cbuuid()
-                                                           primary:YES];
-            let _: Result<(), ()> = msg_send![service, setValue:NSArray::from_vec(characteristics)
-                                 forKey:NSString::from_str("characteristics")];
+            let mutable_service = CBMutableService::initWithType_primary(
+                CBMutableService::alloc(),
+                &service.uuid.to_cbuuid(),
+                service.primary,
+            );
 
-            let peripheral_manager = *self
-                .peripheral_manager_delegate
-                .get_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR);
+            if !characteristics.is_empty() {
+                let chars = NSArray::from_vec(characteristics);
+                mutable_service.setCharacteristics(Some(&chars));
+            }
 
-            let _: Result<(), ()> = msg_send![peripheral_manager, addService: service];
+            self.peripheral_manager_delegate
+                .addService(&mutable_service);
+            println!("Added Services")
         }
     }
 }
 
-impl Default for PeripheralManager {
-    fn default() -> Self {
-        PeripheralManager::new()
-    }
-}
+pub fn run_corebluetooth_thread(
+    event_sender: Sender<PeripheralDelegateEvent>,
+) -> Result<response_channel::Sender<CoreBluetoothMessage, TokenKind>, Error> {
+    let (sender, receiver) =
+        response_channel::channel::<CoreBluetoothMessage, TokenKind>(256, None);
 
-extern "C" fn init(delegate: &mut Object, _cmd: Sel) -> *mut Object {
-    unsafe {
-        let cls = class!(CBPeripheralManager);
-        let mut obj: *mut Object = msg_send![cls, alloc];
+    thread::spawn(move || {
+        let runtime = runtime::Builder::new_current_thread().build().unwrap();
+        runtime.block_on(async move {
+            println!("Runtime Started");
+            let peripheral_delegate = Arc::new(PeripheralDelegate::new(event_sender));
+            let mut peripheral_manager =
+                PeripheralManager::new(peripheral_delegate.clone(), receiver).unwrap();
+            loop {
+                peripheral_manager.wait_for_message().await;
+            }
+        })
+    });
 
-        #[allow(clippy::cast_ptr_alignment)]
-        let init_with_delegate = delegate as *mut Object as *mut *mut Object;
-
-        let label = CString::new("CBqueue").unwrap();
-        let queue = dispatch_queue_create(label.as_ptr(), DISPATCH_QUEUE_SERIAL);
-
-        obj = msg_send![obj, initWithDelegate:init_with_delegate
-                                        queue:queue];
-        delegate.set_ivar::<*mut Object>(PERIPHERAL_MANAGER_IVAR, obj);
-
-        delegate.set_ivar::<BOOL>(POWERED_ON_IVAR, NO);
-
-        delegate
-    }
+    Ok(sender)
 }
