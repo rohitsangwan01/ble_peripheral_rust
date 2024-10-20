@@ -1,82 +1,101 @@
-mod adapter;
-mod advertisement;
-mod common;
-mod connection;
-mod constants;
-mod error;
-mod gatt;
+mod characteristic_utils;
 
-use std::{string::ToString, sync::Arc};
+use crate::gatt::{peripheral_event::PeripheralEvent, service};
+use bluer::{
+    adv::{Advertisement, AdvertisementHandle},
+    gatt::local::{Application, ApplicationHandle},
+    Adapter, Error,
+};
+use characteristic_utils::parse_services;
+use std::collections::{BTreeMap, BTreeSet};
+use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
-
-use self::{adapter::Adapter, advertisement::Advertisement, connection::Connection, gatt::Gatt};
-use crate::{gatt::service::Service, Error};
 
 #[derive(Debug)]
 pub struct Peripheral {
     adapter: Adapter,
-    gatt: Gatt,
-    advertisement: Advertisement,
+    services: Vec<service::Service>,
+    adv_handle: Option<AdvertisementHandle>,
+    app_handle: Option<ApplicationHandle>,
+    sender_tx: Sender<PeripheralEvent>,
 }
 
 impl Peripheral {
-    #[allow(clippy::new_ret_no_self)]
-    pub async fn new() -> Result<Self, Error> {
-        let connection = Arc::new(Connection::new()?);
-        let adapter = Adapter::new(connection.clone()).await?;
-        adapter.powered(true).await?;
-        let gatt = Gatt::new(connection.clone(), adapter.object_path.clone());
-        let advertisement = Advertisement::new(connection, adapter.object_path.clone());
+    pub async fn new(sender_tx: Sender<PeripheralEvent>) -> Result<Self, Error> {
+        let session = bluer::Session::new().await?;
+        let adapter = session.default_adapter().await?;
+        adapter.set_powered(true).await?;
+        println!(
+            "Initialize Bluetooth adapter {} with address {}",
+            adapter.name(),
+            adapter.address().await?
+        );
 
         Ok(Peripheral {
             adapter,
-            gatt,
-            advertisement,
+            services: Vec::new(),
+            adv_handle: None,
+            app_handle: None,
+            sender_tx,
         })
     }
 
-    pub async fn get_alias(&self) -> Result<String, Error> {
-        self.adapter.get_alias().await
-    }
-
-    pub async fn set_alias(&self, alias: &str) -> Result<(), Error> {
-        self.adapter.set_alias(alias).await
-    }
-
-    pub async fn is_powered(self: &Self) -> Result<bool, Error> {
-        self.adapter.is_powered().await
-    }
-
     pub async fn register_gatt(&self) -> Result<(), Error> {
-        self.gatt.register().await
+        Ok(())
     }
 
     pub async fn unregister_gatt(&self) -> Result<(), Error> {
-        self.gatt.unregister().await
+        Ok(())
     }
 
-    pub async fn start_advertising(self: &Self, name: &str, uuids: &[Uuid]) -> Result<(), Error> {
-        self.advertisement.add_name(name);
-        self.advertisement.add_uuids(
-            uuids
-                .to_vec()
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<String>>(),
-        );
-
-        self.advertisement.register().await
+    pub async fn is_powered(&self) -> Result<bool, Error> {
+        let result = self.adapter.is_powered().await?;
+        return Ok(result);
     }
 
-    pub async fn stop_advertising(self: &Self) -> Result<(), Error> {
-        self.advertisement.unregister().await
+    pub async fn is_advertising(&self) -> Result<bool, Error> {
+        let result = self.adapter.active_advertising_instances().await?;
+        return Ok(result > 0);
     }
 
-    pub async fn is_advertising(self: &Self) -> Result<bool, Error> {
-        Ok(self.advertisement.is_advertising())
+    pub async fn start_advertising(&mut self, name: &str, uuids: &[Uuid]) -> Result<(), Error> {
+        let manufacturer_data = BTreeMap::new();
+        // manufacturer_data.insert(MANUFACTURER_ID, vec![0x21, 0x22, 0x23, 0x24]);
+
+        let mut services: BTreeSet<Uuid> = BTreeSet::new();
+        for uuid in uuids {
+            services.insert(*uuid);
+        }
+
+        let le_advertisement = Advertisement {
+            service_uuids: services,
+            manufacturer_data,
+            discoverable: Some(true),
+            local_name: Some(name.to_string()),
+            ..Default::default()
+        };
+        let adv_handle: AdvertisementHandle = self.adapter.advertise(le_advertisement).await?;
+        println!("AdvHandle: {:?}", adv_handle);
+
+        let application = Application {
+            services: parse_services(self.services.clone(), self.sender_tx.clone()),
+            ..Default::default()
+        };
+        let app_handle = self.adapter.serve_gatt_application(application).await?;
+        println!("AdvHandle: {:?}", app_handle);
+        self.adv_handle = Some(adv_handle);
+        self.app_handle = Some(app_handle);
+        Ok(())
     }
 
-    pub fn add_service(self: &Self, service: &Service) -> Result<(), Error> {
-        self.gatt.add_service(service)
+    pub async fn stop_advertising(&mut self) -> Result<(), Error> {
+        self.adv_handle = None;
+        self.app_handle = None;
+        Ok(())
+    }
+
+    pub async fn add_service(&mut self, service: &service::Service) -> Result<(), Error> {
+        self.services.push(service.clone());
+        Ok(())
     }
 }

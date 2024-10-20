@@ -11,3 +11,4 @@ pub mod descriptor;
 pub mod service;
 
 pub mod event;
+pub mod peripheral_event;

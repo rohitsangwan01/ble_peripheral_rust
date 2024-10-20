@@ -24,11 +24,7 @@ uuid = "1.10.0"
 log = "0.4"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-dbus = "^0.9.0"
-dbus-tokio = "^0.7.0"
-dbus-tree = "^0.9.1"
-dbus-crossroads = "^0.5.2"
-
+bluer = { version = "0.17.3", features = ["full"] }
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 objc2-core-bluetooth = { version = "0.2.2", features = [

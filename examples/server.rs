@@ -9,11 +9,10 @@ use uuid::Uuid;
 
 use ble_peripheral_rust::{
     gatt::{
-        characteristic,
-        characteristic::Characteristic,
-        descriptor,
-        descriptor::Descriptor,
+        characteristic::{self, Characteristic},
+        descriptor::{self, Descriptor},
         event::{Event, Response},
+        peripheral_event::PeripheralEvent,
         service::Service,
     },
     Peripheral, SdpShortUuid,
@@ -157,7 +156,15 @@ async fn main() {
         }
     };
 
-    let peripheral = Peripheral::new().await.unwrap();
+    let (sender_tx, mut receiver_rx) = tokio::sync::mpsc::channel::<PeripheralEvent>(1);
+
+    let mut peripheral = Peripheral::new(sender_tx).await.unwrap();
+
+    tokio::spawn(async move {
+        while let Some(event) = receiver_rx.recv().await {
+            println!("Peripheral event: {:?}", event);
+        }
+    });
 
     while !peripheral.is_powered().await.unwrap() {}
     println!("Peripheral powered on");
