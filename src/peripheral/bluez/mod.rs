@@ -1,29 +1,27 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    vec,
-};
+mod characteristic_utils;
 
+use crate::gatt::{peripheral_event::PeripheralEvent, service};
 use bluer::{
     adv::{Advertisement, AdvertisementHandle},
-    gatt::local::{
-        characteristic_control, service_control, Application, Characteristic, CharacteristicNotify,
-        CharacteristicNotifyMethod, CharacteristicWrite, CharacteristicWriteMethod, Service,
-    },
+    gatt::local::{Application, ApplicationHandle},
     Adapter, Error,
 };
-use futures::StreamExt;
+use characteristic_utils::parse_services;
+use std::collections::{BTreeMap, BTreeSet};
+use tokio::sync::mpsc::Sender;
 use uuid::Uuid;
-
-use crate::gatt::service;
 
 #[derive(Debug)]
 pub struct Peripheral {
     adapter: Adapter,
-    application: Application,
+    services: Vec<service::Service>,
+    adv_handle: Option<AdvertisementHandle>,
+    app_handle: Option<ApplicationHandle>,
+    sender_tx: Sender<PeripheralEvent>,
 }
 
 impl Peripheral {
-    pub async fn new() -> Result<Self, Error> {
+    pub async fn new(sender_tx: Sender<PeripheralEvent>) -> Result<Self, Error> {
         let session = bluer::Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
@@ -32,13 +30,13 @@ impl Peripheral {
             adapter.name(),
             adapter.address().await?
         );
-        let application = Application {
-            ..Default::default()
-        };
 
         Ok(Peripheral {
             adapter,
-            application,
+            services: Vec::new(),
+            adv_handle: None,
+            app_handle: None,
+            sender_tx,
         })
     }
 
@@ -60,7 +58,7 @@ impl Peripheral {
         return Ok(result > 0);
     }
 
-    pub async fn start_advertising(self: &Self, name: &str, uuids: &[Uuid]) -> Result<(), Error> {
+    pub async fn start_advertising(&mut self, name: &str, uuids: &[Uuid]) -> Result<(), Error> {
         let manufacturer_data = BTreeMap::new();
         // manufacturer_data.insert(MANUFACTURER_ID, vec![0x21, 0x22, 0x23, 0x24]);
 
@@ -78,62 +76,26 @@ impl Peripheral {
         };
         let adv_handle: AdvertisementHandle = self.adapter.advertise(le_advertisement).await?;
         println!("AdvHandle: {:?}", adv_handle);
-        let app_handle = self
-            .adapter
-            .serve_gatt_application(self.application)
-            .await?;
-        println!("AdvHandle: {:?}", app_handle);
-        Ok(())
-    }
 
-    pub async fn stop_advertising(&self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    pub async fn add_service(&self, service: &service::Service) -> Result<(), Error> {
-        let (_, service_handle) = service_control();
-
-        let mut chars: Vec<Characteristic> = vec![];
-
-        for char in service.characteristics.iter() {
-            let (mut char_control, char_handle) = characteristic_control();
-
-            chars.append(&mut vec![Characteristic {
-                uuid: char.uuid,
-                write: Some(CharacteristicWrite {
-                    write: true,
-                    write_without_response: true,
-                    method: CharacteristicWriteMethod::Io,
-                    ..Default::default()
-                }),
-                notify: Some(CharacteristicNotify {
-                    notify: true,
-                    method: CharacteristicNotifyMethod::Io,
-                    ..Default::default()
-                }),
-                control_handle: char_handle,
-                ..Default::default()
-            }]);
-
-            tokio::spawn(async move {
-                loop {
-                    if let Some(event) = char_control.next().await {
-                        print!("event {:?}", event)
-                    }
-                }
-            });
-        }
-
-        let service = Service {
-            uuid: service.uuid,
-            primary: true,
-            characteristics: chars,
-            control_handle: service_handle,
+        let application = Application {
+            services: parse_services(self.services.clone(), self.sender_tx.clone()),
             ..Default::default()
         };
+        let app_handle = self.adapter.serve_gatt_application(application).await?;
+        println!("AdvHandle: {:?}", app_handle);
+        self.adv_handle = Some(adv_handle);
+        self.app_handle = Some(app_handle);
+        Ok(())
+    }
 
-        self.application.services.append(&mut vec![service]);
+    pub async fn stop_advertising(&mut self) -> Result<(), Error> {
+        self.adv_handle = None;
+        self.app_handle = None;
+        Ok(())
+    }
 
+    pub async fn add_service(&mut self, service: &service::Service) -> Result<(), Error> {
+        self.services.push(service.clone());
         Ok(())
     }
 }
