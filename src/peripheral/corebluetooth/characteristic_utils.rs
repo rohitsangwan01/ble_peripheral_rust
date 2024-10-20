@@ -16,17 +16,42 @@ pub fn parse_characteristic(characteristic: &Characteristic) -> Retained<CBChara
             .as_ref()
             .map(|value| NSData::from_vec(value.clone()));
 
-        return Retained::into_super(
-            CBMutableCharacteristic::initWithType_properties_value_permissions(
-                CBMutableCharacteristic::alloc(),
-                &characteristic.uuid.to_cbuuid(),
-                properties,
-                value_data.as_ref().map(|data| data as &NSData),
-                permissions,
-            ),
+        let mutable_char = CBMutableCharacteristic::initWithType_properties_value_permissions(
+            CBMutableCharacteristic::alloc(),
+            &characteristic.uuid.to_cbuuid(),
+            properties,
+            value_data.as_ref().map(|data| data as &NSData),
+            permissions,
         );
+
+        // let descriptors: Retained<NSArray<CBDescriptor>> = NSArray::from_vec(
+        //     characteristic
+        //         .descriptors
+        //         .iter()
+        //         .map(|desc| parse_descriptor(desc))
+        //         .collect(),
+        // );
+
+        // mutable_char.setDescriptors(Some(&descriptors));
+
+        return Retained::into_super(mutable_char);
     }
 }
+
+// pub fn parse_descriptor(descriptor: &Descriptor) -> Retained<CBDescriptor> {
+//     unsafe {
+//         let value_data = descriptor
+//             .value
+//             .as_ref()
+//             .map(|value| NSData::from_vec(value.clone()));
+
+//         return Retained::into_super(CBMutableDescriptor::initWithType_value(
+//             CBMutableDescriptor::alloc(),
+//             &descriptor.uuid.to_cbuuid(),
+//             value_data.as_ref().map(|data| data as &AnyObject),
+//         ));
+//     }
+// }
 
 fn parse_properties_and_permissions(
     characteristic: &Characteristic,
