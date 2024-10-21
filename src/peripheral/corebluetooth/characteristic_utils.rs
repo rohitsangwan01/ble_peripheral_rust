@@ -19,15 +19,12 @@ pub fn parse_characteristic(characteristic: &Characteristic) -> Retained<CBChara
                 acc | property.clone().to_cb_property()
             });
 
-        println!("Properties: {:?}", properties);
-
         let permissions = characteristic
             .permissions
             .iter()
             .fold(CBAttributePermissions::empty(), |acc, permission| {
                 acc | permission.clone().to_attribute_permission()
             });
-        println!("permissions: {:?}", permissions);
 
         let value_data = characteristic
             .value

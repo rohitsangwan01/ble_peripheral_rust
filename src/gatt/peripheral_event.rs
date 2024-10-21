@@ -1,6 +1,7 @@
+use tokio::sync::oneshot;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum PeripheralEvent {
     DidUpdateState {
         is_powered: bool,
@@ -26,6 +27,7 @@ pub enum PeripheralEvent {
         client: String,
         service: Uuid,
         characteristic: Uuid,
+        responder: oneshot::Sender<Vec<u8>>,
     },
     DidReceiveWriteRequest {
         client: String,

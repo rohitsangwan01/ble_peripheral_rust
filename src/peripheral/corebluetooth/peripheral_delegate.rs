@@ -1,14 +1,17 @@
 use crate::gatt::peripheral_event::PeripheralEvent;
 
-use super::mac_extensions::UuidHelper;
-use objc2::{declare_class, msg_send_id, mutability, rc::Retained, ClassType, DeclaredClass};
+use super::{mac_extensions::UuidHelper, mac_utils};
+use objc2::{
+    declare_class, msg_send_id, mutability, rc::Retained, runtime::AnyObject, ClassType,
+    DeclaredClass,
+};
 use objc2_core_bluetooth::{
-    CBATTRequest, CBCentral, CBCharacteristic, CBManagerState, CBPeripheralManager,
+    CBATTError, CBATTRequest, CBCentral, CBCharacteristic, CBManagerState, CBPeripheralManager,
     CBPeripheralManagerDelegate, CBService,
 };
-use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
-use std::fmt::Debug;
-use tokio::sync::mpsc::{self, Sender};
+use objc2_foundation::{NSArray, NSData, NSError, NSObject, NSObjectProtocol};
+use std::{cell::RefCell, ffi::CString, fmt::Debug, sync::Arc};
+use tokio::sync::{mpsc::Sender, oneshot};
 
 declare_class!(
     #[derive(Debug)]
@@ -21,7 +24,7 @@ declare_class!(
     }
 
     impl DeclaredClass for PeripheralDelegate {
-        type Ivars = Sender<PeripheralEvent>;
+        type Ivars = (Sender<PeripheralEvent>, RefCell<Option<Retained<CBPeripheralManager>>>);
     }
 
     unsafe impl NSObjectProtocol for PeripheralDelegate {}
@@ -105,11 +108,18 @@ declare_class!(
                 }
                 let central = request.central();
                 let characteristic = request.characteristic();
-                self.send_event(PeripheralEvent::DidReceiveReadRequest{
-                    client: central.identifier().to_string(),
-                    service: characteristic.service().unwrap().get_uuid(),
-                    characteristic: characteristic.get_uuid(),
-                });
+
+                let (resp_tx, resp_rx) = oneshot::channel::<Vec<u8>>();
+                self.send_and_respond(
+                    PeripheralEvent::DidReceiveReadRequest{
+                        client: central.identifier().to_string(),
+                        service: characteristic.service().unwrap().get_uuid(),
+                        characteristic: characteristic.get_uuid(),
+                        responder: resp_tx,
+                    },
+                    request,
+                    resp_rx,
+                );
             }
         }
 
@@ -146,17 +156,89 @@ declare_class!(
 );
 
 impl PeripheralDelegate {
-    pub fn new(sender: mpsc::Sender<PeripheralEvent>) -> Retained<Self> {
-        let this = PeripheralDelegate::alloc().set_ivars(sender);
-        unsafe { msg_send_id![super(this), init] }
+    pub fn new(
+        sender: Sender<PeripheralEvent>,
+    ) -> (
+        Retained<CBPeripheralManager>,
+        Arc<Retained<PeripheralDelegate>>,
+    ) {
+        let this = PeripheralDelegate::alloc().set_ivars((sender, RefCell::new(None)));
+        let delegate: Arc<Retained<PeripheralDelegate>> =
+            Arc::new(unsafe { msg_send_id![super(this), init] });
+        let label: CString = CString::new("CBqueue").unwrap();
+        let queue: *mut std::ffi::c_void = unsafe {
+            mac_utils::dispatch_queue_create(label.as_ptr(), mac_utils::DISPATCH_QUEUE_SERIAL)
+        };
+        let queue: *mut AnyObject = queue.cast();
+        let peripheral_manager_delegate: Retained<CBPeripheralManager> = unsafe {
+            msg_send_id![CBPeripheralManager::alloc(), initWithDelegate: &**delegate, queue: queue]
+        };
+
+        // Store CBPeripheralManager delegate within PeripheralDelegate to respond on requests
+        // However, it creates a circular reference, which could potentially lead to memory leaks if not managed carefully
+        delegate
+            .ivars()
+            .1
+            .borrow_mut()
+            .replace(peripheral_manager_delegate.clone());
+
+        return (peripheral_manager_delegate, delegate);
+    }
+
+    pub fn get_peripheral_manager(&self) -> Retained<CBPeripheralManager> {
+        return self.ivars().1.borrow().clone().unwrap();
     }
 
     fn send_event(&self, event: PeripheralEvent) {
-        let sender = self.ivars().clone();
+        let sender = self.ivars().0.clone();
         futures::executor::block_on(async {
             if let Err(e) = sender.send(event).await {
-                println!("Error sending delegate event: {}", e);
+                log::error!("Error sending delegate event: {}", e);
             }
         });
+    }
+
+    fn send_and_respond(
+        &self,
+        event: PeripheralEvent,
+        request: &CBATTRequest,
+        resp_rx: oneshot::Receiver<Vec<u8>>,
+    ) {
+        let sender = self.ivars().0.clone();
+
+        futures::executor::block_on(async {
+            // Send to Listnere
+            if let Err(e) = sender.send(event).await {
+                log::error!("Error sending delegate event: {}", e);
+                return;
+            }
+
+            // Wait for response
+            let result = resp_rx.await;
+            unsafe {
+                if result.is_ok() {
+                    request.setValue(Some(&NSData::from_vec(result.unwrap())));
+                } else {
+                    request.setValue(None);
+                }
+
+                // Update Manager
+                self.get_peripheral_manager()
+                    .respondToRequest_withResult(request, CBATTError::Success);
+            }
+        });
+    }
+}
+
+impl Drop for PeripheralDelegate {
+    fn drop(&mut self) {
+        // Clear the reference to CBPeripheralManager, and Remove delegate
+        if let Some(manager) = self.ivars().1.borrow_mut().take() {
+            unsafe {
+                manager.setDelegate(None);
+                log::debug!("Delegate removed")
+            }
+        }
+        log::debug!("PeripheralDelegate dropped");
     }
 }

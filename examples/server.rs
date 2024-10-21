@@ -18,6 +18,7 @@ const ADVERTISING_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
 async fn main() {
+    std::env::set_var("RUST_LOG", "info");
     if let Err(err) = pretty_env_logger::try_init() {
         eprintln!("WARNING: failed to initialize logging framework: {}", err);
     }
@@ -36,7 +37,6 @@ async fn main() {
                 properties::AttributePermission::Readable,
                 properties::AttributePermission::Writeable,
             ],
-            // Some(String::from("hi").into()),
             None,
             vec![
                 // Descriptor
@@ -66,13 +66,13 @@ async fn main() {
 
     tokio::spawn(async move {
         while let Some(event) = receiver_rx.recv().await {
-            println!("Peripheral event: {:?}", event);
+            log::debug!("Peripheral event: {:?}", event);
             handle_updates(event);
         }
     });
 
     while !peripheral.is_powered().await.unwrap() {}
-    println!("Peripheral powered on");
+    log::info!("Peripheral powered on");
 
     peripheral.add_service(&service).await.unwrap();
 
@@ -81,35 +81,38 @@ async fn main() {
         .await
         .unwrap();
 
-    println!("Peripheral started advertising");
+    log::info!("Peripheral started advertising");
     let ad_check = async { while !peripheral.is_advertising().await.unwrap() {} };
     let timeout = tokio::time::sleep(ADVERTISING_TIMEOUT);
     futures::join!(ad_check, timeout);
 
     peripheral.stop_advertising().await.unwrap();
+
     while peripheral.is_advertising().await.unwrap() {}
-    println!("Peripheral stopped advertising");
+    log::info!("Peripheral stopped advertising");
 }
 
 pub fn handle_updates(update: PeripheralEvent) {
     match update {
         PeripheralEvent::DidUpdateState { is_powered } => {
-            println!("PowerOn: {:?}", is_powered)
+            log::info!("PowerOn: {:?}", is_powered)
         }
         PeripheralEvent::DidStartAdverising { error } => {
-            println!("DidStartAdvertising: {:?}", error)
+            log::info!("DidStartAdvertising: {:?}", error)
         }
         PeripheralEvent::DidAddService { service, error } => {
-            println!("DidAddService: {:?} {:?}", service, error)
+            log::info!("DidAddService: {:?} {:?}", service, error)
         }
         PeripheralEvent::DidSubscribeToCharacteristic {
             client,
             service,
             characteristic,
         } => {
-            println!(
+            log::info!(
                 "DidSubscribeToCharacteristic: {:?} {:?} {:?}",
-                client, service, characteristic
+                client,
+                service,
+                characteristic
             )
         }
         PeripheralEvent::DidUnsubscribeFromCharacteristic {
@@ -117,20 +120,28 @@ pub fn handle_updates(update: PeripheralEvent) {
             service,
             characteristic,
         } => {
-            println!(
+            log::info!(
                 "DidUnsubscribeFromCharacteristic: {:?} {:?} {:?}",
-                client, service, characteristic
+                client,
+                service,
+                characteristic
             )
         }
         PeripheralEvent::DidReceiveReadRequest {
             client,
             service,
             characteristic,
+            responder,
         } => {
-            println!(
+            log::info!(
                 "DidReceiveReadRequest: {:?} {:?} {:?}",
-                client, service, characteristic
-            )
+                client,
+                service,
+                characteristic
+            );
+            if let Err(err) = responder.send(String::from("hi").into()) {
+                log::error!("Error sending response: {:?}", err);
+            }
         }
         PeripheralEvent::DidReceiveWriteRequest {
             client,
@@ -138,9 +149,12 @@ pub fn handle_updates(update: PeripheralEvent) {
             characteristic,
             value,
         } => {
-            println!(
+            log::info!(
                 "DidReceiveWriteRequest: {:?} {:?} {:?} {:?}",
-                client, service, characteristic, value
+                client,
+                service,
+                characteristic,
+                value
             )
         }
     }
