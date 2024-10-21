@@ -1,20 +1,19 @@
 use super::characteristic::Characteristic;
-use std::collections::HashSet;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct Service {
-    pub(crate) uuid: Uuid,
-    pub(crate) primary: bool,
-    pub(crate) characteristics: HashSet<Characteristic>,
+    pub uuid: Uuid,
+    pub primary: bool,
+    pub characteristics: Vec<Characteristic>,
 }
 
-impl Service {
-    pub fn new(uuid: Uuid, primary: bool, characteristics: HashSet<Characteristic>) -> Self {
+impl Default for Service {
+    fn default() -> Self {
         Service {
-            uuid,
-            primary,
-            characteristics,
+            uuid: Uuid::nil(),
+            primary: true,
+            characteristics: Vec::new(),
         }
     }
 }

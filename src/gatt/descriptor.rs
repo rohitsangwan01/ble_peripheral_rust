@@ -1,24 +1,28 @@
-use super::event::EventSender;
-use std::hash::{Hash, Hasher};
+use super::properties::{AttributePermission, CharacteristicProperty};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct Descriptor {
-    pub(crate) uuid: Uuid,
-    pub(crate) properties: Properties,
-    pub(crate) value: Option<Vec<u8>>,
+    pub uuid: Uuid,
+    pub properties: Vec<CharacteristicProperty>,
+    pub permissions: Vec<AttributePermission>,
+    pub value: Option<Vec<u8>>,
 }
 
-impl Descriptor {
-    pub fn new(uuid: Uuid, properties: Properties, value: Option<Vec<u8>>) -> Self {
+impl Default for Descriptor {
+    fn default() -> Self {
         Descriptor {
-            uuid,
-            properties,
-            value,
+            uuid: Uuid::nil(),
+            properties: vec![
+                CharacteristicProperty::Read,
+                CharacteristicProperty::Write,
+                CharacteristicProperty::Notify,
+            ],
+            permissions: vec![
+                AttributePermission::Readable,
+                AttributePermission::Writeable,
+            ],
+            value: None,
         }
     }
 }
-
-impl_uuid_hash_eq!(Descriptor);
-
-properties!(WriteWithResponse, EventSender);

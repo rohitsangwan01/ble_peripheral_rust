@@ -1,4 +1,7 @@
-use crate::gatt::characteristic::{Characteristic, Secure, Write};
+use crate::gatt::{
+    characteristic::Characteristic,
+    properties::{AttributePermission, CharacteristicProperty},
+};
 use objc2::{rc::Retained, ClassType};
 use objc2_core_bluetooth::{
     CBAttributePermissions, CBCharacteristic, CBCharacteristicProperties, CBMutableCharacteristic,
@@ -9,7 +12,19 @@ use super::mac_extensions::UuidExtension;
 
 pub fn parse_characteristic(characteristic: &Characteristic) -> Retained<CBCharacteristic> {
     unsafe {
-        let (properties, permissions) = parse_properties_and_permissions(characteristic);
+        let properties = characteristic
+            .properties
+            .iter()
+            .fold(CBCharacteristicProperties::empty(), |acc, property| {
+                acc | property.clone().to_cb_property()
+            });
+
+        let permissions = characteristic
+            .permissions
+            .iter()
+            .fold(CBAttributePermissions::empty(), |acc, permission| {
+                acc | permission.clone().to_attribute_permission()
+            });
 
         let value_data = characteristic
             .value
@@ -53,45 +68,54 @@ pub fn parse_characteristic(characteristic: &Characteristic) -> Retained<CBChara
 //     }
 // }
 
-fn parse_properties_and_permissions(
-    characteristic: &Characteristic,
-) -> (CBCharacteristicProperties, CBAttributePermissions) {
-    let mut properties: CBCharacteristicProperties = CBCharacteristicProperties::empty();
-    let mut permissions: CBAttributePermissions = CBAttributePermissions::empty();
-
-    if let Some(secure) = &characteristic.properties.read {
-        properties |= CBCharacteristicProperties::CBCharacteristicPropertyRead;
-        match secure.0 {
-            Secure::Secure(_) => permissions |= CBAttributePermissions::ReadEncryptionRequired,
-            Secure::Insecure(_) => permissions |= CBAttributePermissions::Readable,
+impl CharacteristicProperty {
+    fn to_cb_property(self) -> CBCharacteristicProperties {
+        return match self {
+            CharacteristicProperty::Broadcast => {
+                CBCharacteristicProperties::CBCharacteristicPropertyBroadcast
+            }
+            CharacteristicProperty::Read => {
+                CBCharacteristicProperties::CBCharacteristicPropertyRead
+            }
+            CharacteristicProperty::WriteWithoutResponse => {
+                CBCharacteristicProperties::CBCharacteristicPropertyWriteWithoutResponse
+            }
+            CharacteristicProperty::Write => {
+                CBCharacteristicProperties::CBCharacteristicPropertyWrite
+            }
+            CharacteristicProperty::Notify => {
+                CBCharacteristicProperties::CBCharacteristicPropertyNotify
+            }
+            CharacteristicProperty::NotifyEncryptionRequired => {
+                CBCharacteristicProperties::CBCharacteristicPropertyNotifyEncryptionRequired
+            }
+            CharacteristicProperty::Indicate => {
+                CBCharacteristicProperties::CBCharacteristicPropertyIndicate
+            }
+            CharacteristicProperty::IndicateEncryptionRequired => {
+                CBCharacteristicProperties::CBCharacteristicPropertyIndicateEncryptionRequired
+            }
+            CharacteristicProperty::AuthenticatedSignedWrites => {
+                CBCharacteristicProperties::CBCharacteristicPropertyAuthenticatedSignedWrites
+            }
+            CharacteristicProperty::ExtendedProperties => {
+                CBCharacteristicProperties::CBCharacteristicPropertyExtendedProperties
+            }
         };
     }
+}
 
-    if let Some(write) = &characteristic.properties.write {
-        match write {
-            Write::WithResponse(secure) => {
-                properties |= CBCharacteristicProperties::CBCharacteristicPropertyWrite;
-                match secure {
-                    Secure::Secure(_) => {
-                        permissions |= CBAttributePermissions::WriteEncryptionRequired
-                    }
-                    Secure::Insecure(_) => permissions |= CBAttributePermissions::Writeable,
-                };
+impl AttributePermission {
+    fn to_attribute_permission(self) -> CBAttributePermissions {
+        return match self {
+            AttributePermission::Readable => CBAttributePermissions::Readable,
+            AttributePermission::Writeable => CBAttributePermissions::Writeable,
+            AttributePermission::ReadEncryptionRequired => {
+                CBAttributePermissions::ReadEncryptionRequired
             }
-            Write::WithoutResponse(_) => {
-                properties |=
-                    CBCharacteristicProperties::CBCharacteristicPropertyWriteWithoutResponse
+            AttributePermission::WriteEncryptionRequired => {
+                CBAttributePermissions::WriteEncryptionRequired
             }
         };
     }
-
-    if characteristic.properties.notify.is_some() {
-        properties |= CBCharacteristicProperties::CBCharacteristicPropertyNotify
-    }
-
-    if characteristic.properties.indicate.is_some() {
-        properties |= CBCharacteristicProperties::CBCharacteristicPropertyIndicate
-    }
-
-    (properties, permissions)
 }

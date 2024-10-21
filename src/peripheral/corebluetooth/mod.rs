@@ -22,14 +22,6 @@ impl Peripheral {
         Ok(Peripheral { peripheral_manager })
     }
 
-    pub async fn register_gatt(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    pub async fn unregister_gatt(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
     pub async fn is_powered(&mut self) -> Result<bool, Error> {
         return Ok(self.peripheral_manager.is_powered());
     }

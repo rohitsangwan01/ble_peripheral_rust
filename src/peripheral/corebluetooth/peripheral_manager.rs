@@ -1,23 +1,22 @@
 use super::characteristic_utils::parse_characteristic;
 use super::mac_extensions::UuidExtension as _;
-use super::{mac_utils, peripheral_delegate::PeripheralDelegate};
+use super::peripheral_delegate::PeripheralDelegate;
 use crate::gatt::peripheral_event::PeripheralEvent;
 use crate::gatt::service::Service;
 use crate::Error;
-use objc2::{msg_send_id, rc::Retained, runtime::AnyObject, ClassType};
+use objc2::{rc::Retained, runtime::AnyObject, ClassType};
 use objc2_core_bluetooth::{
     CBAdvertisementDataLocalNameKey, CBAdvertisementDataServiceUUIDsKey, CBCharacteristic,
     CBManager, CBManagerAuthorization, CBManagerState, CBMutableService, CBPeripheralManager,
 };
 use objc2_foundation::{NSArray, NSDictionary, NSString};
-use std::ffi::CString;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct PeripheralManager {
-    peripheral_manager_delegate: Retained<CBPeripheralManager>,
+    cb_peripheral_manager: Retained<CBPeripheralManager>,
     #[allow(dead_code)] // Keep peripheral_delegate to maintain delegate lifecycle
     peripheral_delegate: Arc<Retained<PeripheralDelegate>>,
 }
@@ -27,24 +26,21 @@ impl PeripheralManager {
         if !is_authorized() {
             return Err(Error::from_type(crate::ErrorType::PermissionDenied));
         }
-        let peripheral_delegate = Arc::new(PeripheralDelegate::new(sender_tx));
-        let label: CString = CString::new("CBqueue").unwrap();
-        let queue: *mut std::ffi::c_void = unsafe {
-            mac_utils::dispatch_queue_create(label.as_ptr(), mac_utils::DISPATCH_QUEUE_SERIAL)
-        };
-        let queue: *mut AnyObject = queue.cast();
-        let peripheral_manager_delegate: Retained<CBPeripheralManager> = unsafe {
-            msg_send_id![CBPeripheralManager::alloc(), initWithDelegate: &**peripheral_delegate, queue: queue]
-        };
+
+        let result: (
+            Retained<CBPeripheralManager>,
+            Arc<Retained<PeripheralDelegate>>,
+        ) = PeripheralDelegate::new(sender_tx);
+
         Ok(Self {
-            peripheral_manager_delegate,
-            peripheral_delegate: peripheral_delegate.clone(),
+            cb_peripheral_manager: result.0,
+            peripheral_delegate: result.1,
         })
     }
 
     pub fn is_powered(self: &Self) -> bool {
         unsafe {
-            let state = self.peripheral_manager_delegate.state();
+            let state = self.cb_peripheral_manager.state();
             state == CBManagerState::PoweredOn
         }
     }
@@ -67,22 +63,23 @@ impl PeripheralManager {
             NSDictionary::from_vec(&keys, objects);
 
         unsafe {
-            println!("Starting advetisemet");
-            self.peripheral_manager_delegate
+            self.cb_peripheral_manager
                 .startAdvertising(Some(&advertising_data));
         }
     }
 
     pub fn stop_advertising(self: &Self) {
         unsafe {
-            self.peripheral_manager_delegate.stopAdvertising();
+            self.cb_peripheral_manager.stopAdvertising();
         }
     }
 
     pub fn is_advertising(self: &Self) -> bool {
-        unsafe { self.peripheral_manager_delegate.isAdvertising() }
+        unsafe { self.cb_peripheral_manager.isAdvertising() }
     }
 
+    // Peripheral with cache value must only have Read permission, else it will crash
+    // TODO: throw proper error, or catch Objc errors
     pub fn add_service(self: &Self, service: &Service) {
         unsafe {
             let characteristics: Vec<Retained<CBCharacteristic>> = service
@@ -91,19 +88,19 @@ impl PeripheralManager {
                 .map(|characteristic| parse_characteristic(characteristic))
                 .collect();
 
-            let mutable_service = CBMutableService::initWithType_primary(
-                CBMutableService::alloc(),
-                &service.uuid.to_cbuuid(),
-                service.primary,
-            );
+            let mutable_service: Retained<CBMutableService> =
+                CBMutableService::initWithType_primary(
+                    CBMutableService::alloc(),
+                    &service.uuid.to_cbuuid(),
+                    service.primary,
+                );
 
             if !characteristics.is_empty() {
                 let chars = NSArray::from_vec(characteristics);
                 mutable_service.setCharacteristics(Some(&chars));
             }
 
-            self.peripheral_manager_delegate
-                .addService(&mutable_service);
+            self.cb_peripheral_manager.addService(&mutable_service);
         }
     }
 }

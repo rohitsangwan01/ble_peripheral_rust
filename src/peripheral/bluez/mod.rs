@@ -25,7 +25,7 @@ impl Peripheral {
         let session = bluer::Session::new().await?;
         let adapter = session.default_adapter().await?;
         adapter.set_powered(true).await?;
-        println!(
+        log::info!(
             "Initialize Bluetooth adapter {} with address {}",
             adapter.name(),
             adapter.address().await?
@@ -38,14 +38,6 @@ impl Peripheral {
             app_handle: None,
             sender_tx,
         })
-    }
-
-    pub async fn register_gatt(&self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    pub async fn unregister_gatt(&self) -> Result<(), Error> {
-        Ok(())
     }
 
     pub async fn is_powered(&self) -> Result<bool, Error> {
@@ -75,14 +67,12 @@ impl Peripheral {
             ..Default::default()
         };
         let adv_handle: AdvertisementHandle = self.adapter.advertise(le_advertisement).await?;
-        println!("AdvHandle: {:?}", adv_handle);
 
         let application = Application {
             services: parse_services(self.services.clone(), self.sender_tx.clone()),
             ..Default::default()
         };
         let app_handle = self.adapter.serve_gatt_application(application).await?;
-        println!("AdvHandle: {:?}", app_handle);
         self.adv_handle = Some(adv_handle);
         self.app_handle = Some(app_handle);
         Ok(())
