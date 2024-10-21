@@ -42,7 +42,7 @@ declare_class!(
             if let Some(error) = error {
                 error_desc = Some(error.localizedDescription().to_string());
             }
-            self.send_event(PeripheralEvent::DidStartAdverising { error: error_desc });
+            self.send_event(PeripheralEvent::DidStartAdvertising { error: error_desc });
         }
 
         #[method(peripheralManager:didAddService:error:)]
@@ -207,13 +207,14 @@ impl PeripheralDelegate {
         let sender = self.ivars().0.clone();
 
         futures::executor::block_on(async {
-            // Send to Listnere
+            // Send to Listener
             if let Err(e) = sender.send(event).await {
                 log::error!("Error sending delegate event: {}", e);
                 return;
             }
 
             // Wait for response
+            // TODO: Add timeout
             let result = resp_rx.await;
             unsafe {
                 if result.is_ok() {

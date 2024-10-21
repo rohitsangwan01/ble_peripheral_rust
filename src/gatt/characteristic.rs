@@ -13,20 +13,21 @@ pub struct Characteristic {
     pub descriptors: Vec<Descriptor>,
 }
 
-impl Characteristic {
-    pub fn new(
-        uuid: Uuid,
-        properties: Vec<CharacteristicProperty>,
-        permissions: Vec<AttributePermission>,
-        value: Option<Vec<u8>>,
-        descriptors: Vec<Descriptor>,
-    ) -> Self {
+impl Default for Characteristic {
+    fn default() -> Self {
         Characteristic {
-            uuid,
-            properties,
-            permissions,
-            value,
-            descriptors,
+            uuid: Uuid::nil(),
+            properties: vec![
+                CharacteristicProperty::Read,
+                CharacteristicProperty::Write,
+                CharacteristicProperty::Notify,
+            ],
+            permissions: vec![
+                AttributePermission::Readable,
+                AttributePermission::Writeable,
+            ],
+            value: None,
+            descriptors: Vec::new(),
         }
     }
 }

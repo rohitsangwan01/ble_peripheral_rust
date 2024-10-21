@@ -8,12 +8,12 @@ pub struct Service {
     pub characteristics: Vec<Characteristic>,
 }
 
-impl Service {
-    pub fn new(uuid: Uuid, primary: bool, characteristics: Vec<Characteristic>) -> Self {
+impl Default for Service {
+    fn default() -> Self {
         Service {
-            uuid,
-            primary,
-            characteristics,
+            uuid: Uuid::nil(),
+            primary: true,
+            characteristics: Vec::new(),
         }
     }
 }

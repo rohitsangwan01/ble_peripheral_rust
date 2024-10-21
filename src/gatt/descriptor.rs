@@ -9,18 +9,20 @@ pub struct Descriptor {
     pub value: Option<Vec<u8>>,
 }
 
-impl Descriptor {
-    pub fn new(
-        uuid: Uuid,
-        properties: Vec<CharacteristicProperty>,
-        permissions: Vec<AttributePermission>,
-        value: Option<Vec<u8>>,
-    ) -> Self {
+impl Default for Descriptor {
+    fn default() -> Self {
         Descriptor {
-            uuid,
-            properties,
-            permissions,
-            value,
+            uuid: Uuid::nil(),
+            properties: vec![
+                CharacteristicProperty::Read,
+                CharacteristicProperty::Write,
+                CharacteristicProperty::Notify,
+            ],
+            permissions: vec![
+                AttributePermission::Readable,
+                AttributePermission::Writeable,
+            ],
+            value: None,
         }
     }
 }

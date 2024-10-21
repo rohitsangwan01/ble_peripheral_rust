@@ -6,7 +6,7 @@ pub enum PeripheralEvent {
     DidUpdateState {
         is_powered: bool,
     },
-    DidStartAdverising {
+    DidStartAdvertising {
         error: Option<String>,
     },
     DidAddService {

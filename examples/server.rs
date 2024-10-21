@@ -7,14 +7,11 @@ use ble_peripheral_rust::{
         characteristic::Characteristic,
         descriptor::Descriptor,
         peripheral_event::PeripheralEvent,
-        properties::{self, AttributePermission, CharacteristicProperty},
+        properties::{AttributePermission, CharacteristicProperty},
         service::Service,
     },
     Peripheral, SdpShortUuid,
 };
-
-const ADVERTISING_NAME: &str = "hello";
-const ADVERTISING_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[tokio::main]
 async fn main() {
@@ -23,42 +20,39 @@ async fn main() {
         eprintln!("WARNING: failed to initialize logging framework: {}", err);
     }
 
-    // Define Characteristsc
+    // Define Characteristics
     let characteristics: Vec<Characteristic> = vec![
-        // Char1 0x2A3D
-        Characteristic::new(
-            Uuid::from_sdp_short_uuid(0x2A3D as u16),
-            vec![
+        // Char 2A3D
+        Characteristic {
+            uuid: Uuid::from_sdp_short_uuid(0x2A3D as u16),
+            properties: vec![
                 CharacteristicProperty::Read,
                 CharacteristicProperty::Write,
                 CharacteristicProperty::Notify,
             ],
-            vec![
-                properties::AttributePermission::Readable,
-                properties::AttributePermission::Writeable,
+            permissions: vec![
+                AttributePermission::Readable,
+                AttributePermission::Writeable,
             ],
-            None,
-            vec![
-                // Descriptor
-                Descriptor::new(
-                    Uuid::from_sdp_short_uuid(0x2A3D as u16),
-                    vec![CharacteristicProperty::Read, CharacteristicProperty::Write],
-                    vec![
-                        AttributePermission::Readable,
-                        AttributePermission::Writeable,
-                    ],
-                    None,
-                ),
-            ],
-        ),
+            value: None,
+            descriptors: vec![Descriptor {
+                uuid: Uuid::from_sdp_short_uuid(0x2A13 as u16),
+                ..Default::default()
+            }],
+        },
+        // Char 1209
+        Characteristic {
+            uuid: Uuid::from_sdp_short_uuid(0x1209 as u16),
+            ..Default::default()
+        },
     ];
 
     // Define Service
-    let service = Service::new(
-        Uuid::from_sdp_short_uuid(0x1234_u16),
-        true,
-        characteristics.clone(),
-    );
+    let service = Service {
+        uuid: Uuid::from_sdp_short_uuid(0x1234_u16),
+        primary: true,
+        characteristics: characteristics.clone(),
+    };
 
     let (sender_tx, mut receiver_rx) = channel::<PeripheralEvent>(1);
 
@@ -77,13 +71,13 @@ async fn main() {
     peripheral.add_service(&service).await.unwrap();
 
     peripheral
-        .start_advertising(ADVERTISING_NAME, &[service.uuid])
+        .start_advertising("RustBLE", &[service.uuid])
         .await
         .unwrap();
 
     log::info!("Peripheral started advertising");
     let ad_check = async { while !peripheral.is_advertising().await.unwrap() {} };
-    let timeout = tokio::time::sleep(ADVERTISING_TIMEOUT);
+    let timeout = tokio::time::sleep(Duration::from_secs(60));
     futures::join!(ad_check, timeout);
 
     peripheral.stop_advertising().await.unwrap();
@@ -97,7 +91,7 @@ pub fn handle_updates(update: PeripheralEvent) {
         PeripheralEvent::DidUpdateState { is_powered } => {
             log::info!("PowerOn: {:?}", is_powered)
         }
-        PeripheralEvent::DidStartAdverising { error } => {
+        PeripheralEvent::DidStartAdvertising { error } => {
             log::info!("DidStartAdvertising: {:?}", error)
         }
         PeripheralEvent::DidAddService { service, error } => {
