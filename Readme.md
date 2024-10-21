@@ -12,4 +12,9 @@ cargo add ble_peripheral_rust
 
 ## Usage
 
-Checkout [examples](./examples/) 
+Checkout [examples](./examples/)
+
+## Thanks to
+
+https://github.com/dfrankland/bluster/tree/master
+https://github.com/deviceplug/btleplug
